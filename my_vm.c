@@ -24,14 +24,39 @@ typedef struct {
 // Global Page Directory
 page_directory_entry *page_directory;
 
+/*
+ * Function 2: SETTING A BIT AT AN INDEX
+ * Function to set a bit at "index" bitmap
+ */
+static void set_bit_at_index(char *bitmap, int index)
+{
+    int byteIndex = index / 8;
+    int bitIndex = index % 8;
+    bitmap[byteIndex] |= (1 << bitIndex);
+}
+
+
+/*
+ * Function 3: GETTING A BIT AT AN INDEX
+ * Function to get a bit at "index"
+ */
+static int get_bit_at_index(char *bitmap, int index)
+{
+    //Get to the location in the character bitmap array
+    //Implement your code here
+    int byteIndex = index / 8;
+    int bitIndex = index % 8;
+    return (bitmap[byteIndex] & (1 << bitIndex)) != 0;
+}
+
 void set_physical_mem(){
     int num_frames = MEMSIZE / PGSIZE;
     physical_memory = (char *)malloc(MEMSIZE);
     memset(physical_memory, 0, MEMSIZE);
 
     // 1 bit per frame bitmap for physical memory
-    physical_memory_bitmap = (char *)malloc(num_frames);
-    memset(physical_memory_bitmap, 0, num_frames);
+    physical_memory_bitmap = (char *)malloc(num_frames / 8);
+    memset(physical_memory_bitmap, 0, num_frames / 8);
 
     // Calculate bits required for page offset
     page_offset_bits = (int)log2(PGSIZE);
@@ -54,7 +79,7 @@ void set_physical_mem(){
 
         // Initialize page table entries (frame numbers)
         for (int j = 0; j < num_page_table_entries; j++) {
-            page_directory[i].page_table[j].frame_number = i * num_page_table_entries + j; 
+            page_directory[i].page_table[j].frame_number = NULL; 
             page_directory[i].page_table[j].valid = 0;
             page_directory[i].page_table[j].present = 0;
         }
@@ -69,10 +94,27 @@ void * translate(unsigned int vp){
 
     //get frame number
     unsigned int frame_number = page_directory[page_directory_index].page_table[page_table_index].frame_number;
-
+    if (frame_number == NULL) {
+        return NULL; // vp not mapped
+    }
     //get physical address
     unsigned int physical_address = (frame_number * PGSIZE) + page_offset;
     return physical_address;
+}
+
+int allocate_frame(unsigned int page_directory_index, unsigned int page_table_index){
+    // Find a free frame
+    int num_frames = MEMSIZE / PGSIZE;
+    for (int i = 0; i < num_frames; i++) {
+        if (get_bit_at_index(physical_memory_bitmap, i) == 0){
+            set_bit_at_index(physical_memory_bitmap, i);
+            page_directory[page_directory_index].page_table[page_table_index].frame_number = i;
+            page_directory[page_directory_index].page_table[page_table_index].present = 1;
+            page_directory[page_directory_index].page_table[page_table_index].valid = 1;
+            return 0;
+        }
+    }
+    return -1; // No free frame found
 }
 
 unsigned int page_map(unsigned int vp){
@@ -81,15 +123,34 @@ unsigned int page_map(unsigned int vp){
     unsigned int page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
 
     // Check if the page table entry is valid
-    if (page_directory[page_directory_index].page_table[page_table_index].valid == 1) {
-        return 1;
-    } else {
-        return 0;
+    if (page_directory[page_directory_index].page_table[page_table_index].valid == 0){
+        if (allocate_frame(page_directory_index, page_table_index) == 0){
+            return 0;
+        } else {
+            return 2;
+        }
     }
+    return 1;
 }
 
-void * t_malloc(size_t n){
+void * t_malloc(size_t n) {
     //TODO: Finish
+    unsigned int vp = 0; // Initialize virtual address
+    int ret = 0;
+    for (int i = 0; i < (1 << page_directory_bits); i++) {
+        for (int j = 0; j < (1 << page_table_bits); j++) {
+            if (page_directory[i].page_table[j].valid == 0) {
+                vp = (i << (page_offset_bits + page_table_bits)) | (j << page_offset_bits); // Create new virtual address
+                ret = page_map(vp); // Map the virtual address to physical address
+                if (ret == 0) {
+                    return (void *)vp; // Return the virtual address as a pointer
+                } else if (ret == 2) {
+                    return NULL; // Return NULL if no free frame is found
+                }
+            }
+        }
+    }
+    return NULL; // Return NULL if no free space is found
 }
 
 int t_free(unsigned int vp, size_t n){
