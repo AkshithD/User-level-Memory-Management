@@ -25,7 +25,7 @@ typedef struct {
 page_directory_entry *page_directory;
 
 /*
- * Function 2: SETTING A BIT AT AN INDEX
+ * SETTING A BIT AT AN INDEX
  * Function to set a bit at "index" bitmap
  */
 static void set_bit_at_index(char *bitmap, int index)
@@ -37,7 +37,7 @@ static void set_bit_at_index(char *bitmap, int index)
 
 
 /*
- * Function 3: GETTING A BIT AT AN INDEX
+ * GETTING A BIT AT AN INDEX
  * Function to get a bit at "index"
  */
 static int get_bit_at_index(char *bitmap, int index)
