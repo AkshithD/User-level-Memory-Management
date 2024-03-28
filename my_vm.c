@@ -86,8 +86,9 @@ void set_physical_mem(){
     
     // Calculate bits for page directory and page table
     int rest = 32 - page_offset_bits;
-    page_directory_bits = (rest + 1) / 2;
-    page_table_bits = rest / 2;
+    int bits_for_size_of_page_table = (int)log2(sizeof(page_table_entry));
+    page_table_bits = (rest + bits_for_size_of_page_table) / page_offset_bits;
+    page_directory_bits = rest - page_table_bits; 
 
     // Calculate the number of entries in the page directory and page tables
     int num_page_directory_entries = 1 << page_directory_bits;
@@ -224,7 +225,6 @@ int page_fault_handler(unsigned int vp , int size){
         pages_to_evict -= evicted_size;
     }
 
-    // page directory and page table index of the new vp
     // if the new vp is already in the evicted pages, then we need to remove it from evicted pages and allocate it to mem.
     // go through the evicted pages and find the vp if it exists else allocate a new frame directly.
     evicted_page *curr = evicted_pages_head;
@@ -309,7 +309,7 @@ void * t_malloc(size_t n) {
     }
     int num_pages = n / PGSIZE + (n % PGSIZE != 0); 
     int ret;
-    memory_frame *curr = (memory_frame *)malloc(sizeof(memory_frame));
+    memory_frame *curr = (memory_frame *)malloc(sizeof(memory_frame)); // If page fault happens this mem block is added twice. fix this
     curr->mem_block = mem_block;
     mem_block++;
     curr->next = NULL;
@@ -387,6 +387,7 @@ int t_free(unsigned int vp, size_t n){
             page_directory[page_directory_index].page_table[page_table_index].present = 0;
             set_bit_at_index(physical_memory_bitmap, page_directory[page_directory_index].page_table[page_table_index].frame_number);
             page_directory[page_directory_index].page_table[page_table_index].frame_number = NULL;
+            page_directory[page_directory_index].page_table[page_table_index].mem_block = NULL;
             vp += PGSIZE;
             page_directory_index = (vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
             page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
@@ -394,6 +395,7 @@ int t_free(unsigned int vp, size_t n){
             return -1; // Return -1 if the page is not valid
         }
     }
+    mem_block--;
     return 0; // Return 0 if the pages are freed successfully
 }
 
