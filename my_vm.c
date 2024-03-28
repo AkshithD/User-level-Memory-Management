@@ -59,7 +59,6 @@ static void set_bit_at_index(char *bitmap, int index)
     bitmap[byteIndex] |= (1 << bitIndex);
 }
 
-
 /*
  * GETTING A BIT AT AN INDEX
  * Function to get a bit at "index"
@@ -116,7 +115,7 @@ void * translate(unsigned int vp){
     unsigned int page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
     unsigned int page_offset = vp & ((1 << page_offset_bits) - 1);
 
-    //get frame number
+    //get frame numberhead
     unsigned int frame_number = page_directory[page_directory_index].page_table[page_table_index].frame_number;
     if (frame_number == NULL) {
         return NULL; // vp not mapped
@@ -126,39 +125,82 @@ void * translate(unsigned int vp){
     return physical_address;
 }
 
-int page_fault_handler(unsigned int vp){
+int allocate_mem(unsigned int vp, int size, evicted_page *curr){
+    // allocate physical mem for vp
+    unsigned int page_directory_index = (vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
+    unsigned int page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
+    for (int i = 0; i < size; i++) {
+        if (allocate_frame(page_directory_index, page_table_index) == -1) {
+            return -1; // no free frame so page replacement needed
+        }
+        vp += PGSIZE;
+    }
+    // copy the content of the evicted page to the physical memory
+    unsigned int physical_address = translate(vp);
+    if (physical_address == NULL) {
+        return -1; // vp not mapped
+    }
+    // set up new node
+    memory_frame *new_curr = (memory_frame *)malloc(sizeof(memory_frame));
+    if (curr != NULL) {
+        memcpy(physical_memory + physical_address, curr->page_content, size);
+        new_curr->vp = curr->vp;
+        new_curr->mem_block = curr->mem_block;
+        new_curr->size = curr->size;
+        new_curr->next = NULL;
+    }else{
+        memset(physical_memory + physical_address, 0, size);
+        new_curr->vp = vp;
+        new_curr->mem_block = mem_block;
+        mem_block++;
+        new_curr->size = size;
+        new_curr->next = NULL;
+    }
+    // add the new mem block to the linked list
+    if (memory_frames_head == NULL) {
+        memory_frames_head = new_curr;
+        memory_frames_tail = new_curr;
+    } else {
+        memory_frames_tail->next = new_curr;
+        memory_frames_tail = new_curr;
+    }
+    return 0;
+}
+
+int evict_first_mem_block(){
     // get head of mem block to replaced
-    memory_frame *head = memory_frames_head;
+    memory_frame *evicting_node = memory_frames_head;
     memory_frames_head = memory_frames_head->next;
     if (memory_frames_head == NULL) {
         memory_frames_tail = NULL;
     }
-    unsigned int page_directory_index = (head->vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
-    unsigned int page_table_index = (head->vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
+    // get page directory and page table index of mem block being replaced
+    unsigned int page_directory_index = (evicting_node->vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
+    unsigned int page_table_index = (evicting_node->vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
 
-    // save the mem block content into a ptr
-    unsigned int physical_address = translate(head->vp);
+    // physical address of the replaced mem block
+    unsigned int physical_address = translate(evicting_node->vp);
     if (physical_address == NULL) {
         return -1; // vp not mapped
     }
-    evicted_page *curr = (evicted_page *)malloc(sizeof(evicted_page));
-    curr->vp = head->vp;
-    curr->page_content = malloc(head->size);
-    memcpy(curr->page_content, physical_memory + physical_address, head->size);
-    curr->mem_block = head->mem_block;
-    curr->size = head->size;
+    evicted_page *curr = (evicted_page *)malloc(sizeof(evicted_page)); // create a new evicted page and set its values
+    curr->vp = evicting_node->vp;
+    curr->page_content = malloc(evicting_node->size); // copy the content of the replaced mem block
+    memcpy(curr->page_content, physical_memory + physical_address, evicting_node->size);
+    curr->mem_block = evicting_node->mem_block;
+    curr->size = evicting_node->size;
     curr->next = NULL;
-    if (evicted_pages_head == NULL) {
+    if (evicted_pages_head == NULL) { // add the evicted page to the evicted ll
         evicted_pages_head = curr;
         evicted_pages_tail = curr;
     } else {
         evicted_pages_tail->next = curr;
         evicted_pages_tail = curr;
     }
-
     // free the mem block
-    free(head);
-    // free the page table entry
+    free(evicting_node);
+
+    // clean the page table entries and physical mem of the evicted mem block
     unsigned int clean_vp = curr->vp;
     for (int i = 0; i < curr->size; i++) {
         page_directory[page_directory_index].page_table[page_table_index].present = 0;
@@ -168,39 +210,44 @@ int page_fault_handler(unsigned int vp){
         page_directory_index = (clean_vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
         page_table_index = (clean_vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
     }
+    return curr->size;
+}
 
-    // allocate physical mem for vp
-    unsigned int page_directory_index = (vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
-    unsigned int page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
+int page_fault_handler(unsigned int vp , int size){
+    
+    int pages_to_evict = size;
+    while (pages_to_evict > 0) {
+        int evicted_size = evict_first_mem_block();
+        if (evicted_size == -1) {
+            return -1; // vp not mapped
+        }
+        pages_to_evict -= evicted_size;
+    }
+
+    // page directory and page table index of the new vp
+    // if the new vp is already in the evicted pages, then we need to remove it from evicted pages and allocate it to mem.
+    // go through the evicted pages and find the vp if it exists else allocate a new frame directly.
     evicted_page *curr = evicted_pages_head;
     evicted_page *prev = NULL;
+    int found = 0;
     while (curr != NULL) {
         if (curr->vp == vp) {
+            found = 1;
             if (prev == NULL) {
                 evicted_pages_head = curr->next;
             } else {
                 prev->next = curr->next;
             }
-            // allocate physical mem for vp
-            for (int i = 0; i < curr->size; i++) {
-                if (allocate_frame(page_directory_index, page_table_index) == -1) {
-                    return -1; // no free frame so page replacement needed
-                }
-                vp += PGSIZE;
-            }
-
-            // copy the content of the evicted page to the physical memory
-            unsigned int physical_address = translate(curr->vp);
-            if (physical_address == NULL) {
-                return -1; // vp not mapped
-            }
-            memcpy(physical_memory + physical_address, curr->page_content, curr->size);
+            allocate_mem(vp, curr->size, curr);
             free(curr->page_content);
             free(curr);
             break;
         }
         prev = curr;
         curr = curr->next;
+    }
+    if (found == 0) {
+        allocate_mem(vp, size, NULL);
     }
     return 0;
 }
@@ -260,7 +307,7 @@ void * t_malloc(size_t n) {
         set_physical_mem();
         initialized = 1;
     }
-    int num_pages = n / PGSIZE;
+    int num_pages = n / PGSIZE + (n % PGSIZE != 0); 
     int ret;
     memory_frame *curr = (memory_frame *)malloc(sizeof(memory_frame));
     curr->mem_block = mem_block;
@@ -282,7 +329,7 @@ void * t_malloc(size_t n) {
     for (int i = 0; i < num_pages; i++) {
         ret = page_map(start_vp);
         if (ret == 1) {
-            page_fault_handler(start_vp);
+            page_fault_handler(start_vp, num_pages);
         }
         start_vp += PGSIZE;
     }
@@ -357,10 +404,10 @@ int put_value(unsigned int vp, void *val, size_t n){
     if (page_directory[page_directory_index].page_table[page_table_index].valid == 0) {
         return -1; // vp not mapped
     }
+    int num_pages = n / PGSIZE + (n % PGSIZE != 0); // Calculate the number of pages (round up)
     if (page_directory[page_directory_index].page_table[page_table_index].present == 0) {
-        page_fault_handler(vp);
+        page_fault_handler(vp, num_pages);
     }
-    int num_pages = n / PGSIZE + (n % PGSIZE != 0); // Calculate the number of pages to free (round up)
     for (int i = 0; i < num_pages; i++) {
         unsigned int physical_address = translate(vp);
         if (physical_address == NULL) {
@@ -379,10 +426,10 @@ int get_value(unsigned int vp, void *dst, size_t n){
     if (page_directory[page_directory_index].page_table[page_table_index].valid == 0) {
         return -1; // vp not mapped
     }
+    int num_pages = n / PGSIZE + (n % PGSIZE != 0); // Calculate the number of pages (round up)
     if (page_directory[page_directory_index].page_table[page_table_index].present == 0) {
-        page_fault_handler(vp);
+        page_fault_handler(vp, num_pages);
     }
-    int num_pages = n / PGSIZE + (n % PGSIZE != 0); // Calculate the number of pages to free (round up)
     for (int i = 0; i < num_pages; i++) {
         unsigned int physical_address = translate(vp);
         if (physical_address == NULL) {
