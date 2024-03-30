@@ -9,8 +9,9 @@ int initialized = 0;
 int page_offset_bits;
 int page_table_bits;
 int page_directory_bits;
-char *physical_memory;
+void *physical_memory;
 char *physical_memory_bitmap;
+int num_frames_free = 0;
 unsigned int mem_block = 0;
 typedef struct {
     unsigned int frame_number; // Physical frame numbers
@@ -48,38 +49,26 @@ typedef struct {
 memory_frame *memory_frames_head = NULL;
 memory_frame *memory_frames_tail = NULL;
 
-/*
- * SETTING A BIT AT AN INDEX
- * Function to set a bit at "index" bitmap
- */
-static void set_bit_at_index(char *bitmap, int index)
-{
-    int byteIndex = index / 8;
-    int bitIndex = index % 8;
-    bitmap[byteIndex] |= (1 << bitIndex);
-}
+static void set_bit_at_index(char *bitmap, int index);
+static int get_bit_at_index(char *bitmap, int index);
+static int allocate_frame(unsigned int page_directory_index, unsigned int page_table_index);
+static int allocate_mem_block(unsigned int vp, int size, evicted_page *curr);
+static int evict_first_mem_block();
+static int page_fault_handler(unsigned int vp, int size, int malloc_flag);
+static unsigned int find_free_pages_in_virtual_memory(int num_pages);
 
-/*
- * GETTING A BIT AT AN INDEX
- * Function to get a bit at "index"
- */
-static int get_bit_at_index(char *bitmap, int index)
-{
-    //Get to the location in the character bitmap array
-    //Implement your code here
-    int byteIndex = index / 8;
-    int bitIndex = index % 8;
-    return (bitmap[byteIndex] & (1 << bitIndex)) != 0;
-}
+
 
 void set_physical_mem(){
     int num_frames = MEMSIZE / PGSIZE;
-    physical_memory = (char *)malloc(MEMSIZE);
+    physical_memory = (void *)malloc(MEMSIZE);
     memset(physical_memory, 0, MEMSIZE);
 
     // 1 bit per frame bitmap for physical memory
     physical_memory_bitmap = (char *)malloc(num_frames / 8);
     memset(physical_memory_bitmap, 0, num_frames / 8);
+
+    num_frames_free = num_frames;
 
     // Calculate bits required for page offset
     page_offset_bits = (int)log2(PGSIZE);
@@ -126,7 +115,7 @@ void * translate(unsigned int vp){
     return physical_address;
 }
 
-int allocate_mem(unsigned int vp, int size, evicted_page *curr){
+int allocate_mem_block(unsigned int vp, int size, evicted_page *curr){
     // allocate physical mem for vp
     unsigned int page_directory_index = (vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
     unsigned int page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
@@ -143,20 +132,11 @@ int allocate_mem(unsigned int vp, int size, evicted_page *curr){
     }
     // set up new node
     memory_frame *new_curr = (memory_frame *)malloc(sizeof(memory_frame));
-    if (curr != NULL) {
-        memcpy(physical_memory + physical_address, curr->page_content, size);
-        new_curr->vp = curr->vp;
-        new_curr->mem_block = curr->mem_block;
-        new_curr->size = curr->size;
-        new_curr->next = NULL;
-    }else{
-        memset(physical_memory + physical_address, 0, size);
-        new_curr->vp = vp;
-        new_curr->mem_block = mem_block;
-        mem_block++;
-        new_curr->size = size;
-        new_curr->next = NULL;
-    }
+    memcpy(physical_memory + physical_address, curr->page_content, size);
+    new_curr->vp = curr->vp;
+    new_curr->mem_block = curr->mem_block;
+    new_curr->size = curr->size;
+    new_curr->next = NULL;
     // add the new mem block to the linked list
     if (memory_frames_head == NULL) {
         memory_frames_head = new_curr;
@@ -214,7 +194,7 @@ int evict_first_mem_block(){
     return curr->size;
 }
 
-int page_fault_handler(unsigned int vp , int size){
+int page_fault_handler(unsigned int vp , int size, int malloc_flag){
     
     int pages_to_evict = size;
     while (pages_to_evict > 0) {
@@ -227,27 +207,24 @@ int page_fault_handler(unsigned int vp , int size){
 
     // if the new vp is already in the evicted pages, then we need to remove it from evicted pages and allocate it to mem.
     // go through the evicted pages and find the vp if it exists else allocate a new frame directly.
-    evicted_page *curr = evicted_pages_head;
-    evicted_page *prev = NULL;
-    int found = 0;
-    while (curr != NULL) {
-        if (curr->vp == vp) {
-            found = 1;
-            if (prev == NULL) {
-                evicted_pages_head = curr->next;
-            } else {
-                prev->next = curr->next;
+    if (malloc_flag == 0) { 
+        evicted_page *curr = evicted_pages_head;
+        evicted_page *prev = NULL;
+        while (curr != NULL) {
+            if (curr->vp == vp) {
+                if (prev == NULL) {
+                    evicted_pages_head = curr->next;
+                } else {
+                    prev->next = curr->next;
+                }
+                allocate_mem_block(vp, curr->size, curr);
+                free(curr->page_content);
+                free(curr);
+                break;
             }
-            allocate_mem(vp, curr->size, curr);
-            free(curr->page_content);
-            free(curr);
-            break;
+            prev = curr;
+            curr = curr->next;
         }
-        prev = curr;
-        curr = curr->next;
-    }
-    if (found == 0) {
-        allocate_mem(vp, size, NULL);
     }
     return 0;
 }
@@ -308,31 +285,36 @@ void * t_malloc(size_t n) {
         initialized = 1;
     }
     int num_pages = n / PGSIZE + (n % PGSIZE != 0); 
-    int ret;
-    memory_frame *curr = (memory_frame *)malloc(sizeof(memory_frame)); // If page fault happens this mem block is added twice. fix this
-    curr->mem_block = mem_block;
-    mem_block++;
-    curr->next = NULL;
-    if (memory_frames_head == NULL) {
-        memory_frames_head = curr;
-        memory_frames_tail = curr;
-    } else {
-        memory_frames_tail->next = curr;
-        memory_frames_tail = curr;
-    }
-
     unsigned int start_vp = find_free_pages_in_virtual_memory(num_pages);
     unsigned int output_vp = start_vp;
     if (start_vp == NULL) {
         return NULL; // no free space in virtual memory
     }
+    int ret;
     for (int i = 0; i < num_pages; i++) {
         ret = page_map(start_vp);
         if (ret == 1) {
-            page_fault_handler(start_vp, num_pages);
+            page_fault_handler(start_vp, num_pages - i, 1);
         }
         start_vp += PGSIZE;
     }
+
+    // make new mem block and set it up
+    memory_frame *new_curr = (memory_frame *)malloc(sizeof(memory_frame));
+    new_curr->vp = output_vp;
+    new_curr->mem_block = mem_block;
+    mem_block++;
+    new_curr->size = num_pages;
+    new_curr->next = NULL;
+    // add the new mem block to the linked list
+    if (memory_frames_head == NULL) {
+        memory_frames_head = new_curr;
+        memory_frames_tail = new_curr;
+    } else {
+        memory_frames_tail->next = new_curr;
+        memory_frames_tail = new_curr;
+    }
+
     return (void *)output_vp;
 }
 
@@ -399,7 +381,7 @@ int t_free(unsigned int vp, size_t n){
     return 0; // Return 0 if the pages are freed successfully
 }
 
-int put_value(unsigned int vp, void *val, size_t n){
+int put_value(unsigned int vp, void *val, size_t n){ // does vp have to be page alligned
     //TODO: Finish
     unsigned int page_directory_index = (vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
     unsigned int page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
@@ -408,7 +390,7 @@ int put_value(unsigned int vp, void *val, size_t n){
     }
     int num_pages = n / PGSIZE + (n % PGSIZE != 0); // Calculate the number of pages (round up)
     if (page_directory[page_directory_index].page_table[page_table_index].present == 0) {
-        page_fault_handler(vp, num_pages);
+        page_fault_handler(vp, num_pages, 0);
     }
     for (int i = 0; i < num_pages; i++) {
         unsigned int physical_address = translate(vp);
@@ -430,7 +412,7 @@ int get_value(unsigned int vp, void *dst, size_t n){
     }
     int num_pages = n / PGSIZE + (n % PGSIZE != 0); // Calculate the number of pages (round up)
     if (page_directory[page_directory_index].page_table[page_table_index].present == 0) {
-        page_fault_handler(vp, num_pages);
+        page_fault_handler(vp, num_pages, 0);
     }
     for (int i = 0; i < num_pages; i++) {
         unsigned int physical_address = translate(vp);
@@ -457,4 +439,28 @@ int check_TLB(unsigned int vpage){
 
 void print_TLB_missrate(){
     //TODO: Finish
+}
+
+/*
+ * SETTING A BIT AT AN INDEX
+ * Function to set a bit at "index" bitmap
+ */
+static void set_bit_at_index(char *bitmap, int index)
+{
+    int byteIndex = index / 8;
+    int bitIndex = index % 8;
+    bitmap[byteIndex] |= (1 << bitIndex);
+}
+
+/*
+ * GETTING A BIT AT AN INDEX
+ * Function to get a bit at "index"
+ */
+static int get_bit_at_index(char *bitmap, int index)
+{
+    //Get to the location in the character bitmap array
+    //Implement your code here
+    int byteIndex = index / 8;
+    int bitIndex = index % 8;
+    return (bitmap[byteIndex] & (1 << bitIndex)) != 0;
 }
