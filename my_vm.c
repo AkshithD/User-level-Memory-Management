@@ -18,6 +18,7 @@ typedef struct {
     int valid; // mapped or not
     int present; // in memory or not
     unsigned int mem_block; // memory block number
+    int size; // size of the memory block
 } page_table_entry;
 
 // Page Directory Entry Structure
@@ -51,7 +52,7 @@ memory_frame *memory_frames_tail = NULL;
 
 static void set_bit_at_index(char *bitmap, int index);
 static int get_bit_at_index(char *bitmap, int index);
-static int allocate_frame(unsigned int page_directory_index, unsigned int page_table_index);
+static int allocate_frame(unsigned int page_directory_index, unsigned int page_table_index, int size);
 static int allocate_mem_block(unsigned int vp, int size, evicted_page *curr);
 static int evict_first_mem_block();
 static int page_fault_handler(unsigned int vp, int size, int malloc_flag);
@@ -95,6 +96,8 @@ void set_physical_mem(){
             page_directory[i].page_table[j].frame_number = NULL; 
             page_directory[i].page_table[j].valid = 0;
             page_directory[i].page_table[j].present = 0;
+            page_directory[i].page_table[j].mem_block = NULL;
+            page_directory[i].page_table[j].size = NULL;
         }
     }
 }
@@ -120,7 +123,7 @@ int allocate_mem_block(unsigned int vp, int size, evicted_page *curr){
     unsigned int page_directory_index = (vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
     unsigned int page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
     for (int i = 0; i < size; i++) {
-        if (allocate_frame(page_directory_index, page_table_index) == -1) {
+        if (allocate_frame(page_directory_index, page_table_index, curr->size) == -1) {
             return -1; // no free frame so page replacement needed
         }
         vp += PGSIZE;
@@ -229,13 +232,15 @@ int page_fault_handler(unsigned int vp , int size, int malloc_flag){
     return 0;
 }
 
-int allocate_frame(unsigned int page_directory_index, unsigned int page_table_index){
+int allocate_frame(unsigned int page_directory_index, unsigned int page_table_index, int size){
     // Find a free frame
     int num_frames = MEMSIZE / PGSIZE;
     for (int i = 0; i < num_frames; i++) {
         if (get_bit_at_index(physical_memory_bitmap, i) == 0){
             set_bit_at_index(physical_memory_bitmap, i);
             page_directory[page_directory_index].page_table[page_table_index].frame_number = i;
+            page_directory[page_directory_index].page_table[page_table_index].mem_block = mem_block;
+            page_directory[page_directory_index].page_table[page_table_index].size = size;
             page_directory[page_directory_index].page_table[page_table_index].present = 1;
             page_directory[page_directory_index].page_table[page_table_index].valid = 1;
             return 0;
@@ -244,13 +249,13 @@ int allocate_frame(unsigned int page_directory_index, unsigned int page_table_in
     return -1; // no free frame so page replacement needed
 }
 
-unsigned int page_map(unsigned int vp){
+unsigned int page_map(unsigned int vp, int size){
     //TODO: Finish
     unsigned int page_directory_index = (vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
     unsigned int page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
 
     // Check if the page table entry is valid
-    if (allocate_frame(page_directory_index, page_table_index) == 0){
+    if (allocate_frame(page_directory_index, page_table_index, size) == 0){
         return 0;
     }
     return 1;
@@ -292,7 +297,7 @@ void * t_malloc(size_t n) {
     }
     int ret;
     for (int i = 0; i < num_pages; i++) {
-        ret = page_map(start_vp);
+        ret = page_map(start_vp, num_pages);
         if (ret == 1) {
             page_fault_handler(start_vp, num_pages - i, 1);
         }
@@ -318,16 +323,9 @@ void * t_malloc(size_t n) {
     return (void *)output_vp;
 }
 
-int t_free(unsigned int vp, size_t n){
-    //TODO: Finish
+int free_mem_block(unsigned int vp){
     unsigned int page_directory_index = (vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
     unsigned int page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
-    unsigned int page_offset = vp & ((1 << page_offset_bits) - 1);
-    if (page_offset != 0) {
-        return -1; // Return -1 if the virtual address is not page-aligned
-    }
-    int num_pages = n / PGSIZE + (n % PGSIZE != 0); // Calculate the number of pages to free (round up). gotta double check how to handle this
-
     if(page_directory[page_directory_index].page_table[page_table_index].present == 1){
         // remove the mem block from the linked list
         memory_frame *curr = memory_frames_head;
@@ -363,6 +361,45 @@ int t_free(unsigned int vp, size_t n){
             curr = curr->next;
         }
     }
+}
+
+int t_free(unsigned int vp, size_t n){
+    //TODO: Finish
+    unsigned int page_directory_index = (vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
+    unsigned int page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
+    unsigned int page_offset = vp & ((1 << page_offset_bits) - 1);
+    if (page_offset != 0) {
+        return -1; // Return -1 if the virtual address is not page-aligned
+    }
+    int num_pages = n / PGSIZE + (n % PGSIZE != 0); // Calculate the number of pages to free (round up). gotta double check how to handle this
+
+    if (page_directory[page_directory_index].page_table[page_table_index].size < num_pages) {
+        return -1; // Return -1 if the size is greater than the allocated size
+    }else if (page_directory[page_directory_index].page_table[page_table_index].size == num_pages) { // if equal then free the whole mem block
+        free_mem_block(vp);
+        mem_block--;
+    }else{ // if less than, adjust the size of the mem block
+        if(page_directory[page_directory_index].page_table[page_table_index].present == 1){
+            memory_frame *curr = memory_frames_head;
+            while (curr != NULL) {
+                if (curr->mem_block == page_directory[page_directory_index].page_table[page_table_index].mem_block) {
+                    curr->size -= num_pages;
+                    break;
+                }
+                curr = curr->next;
+            }
+        }else{
+            evicted_page *curr = evicted_pages_head;
+            while (curr != NULL) {
+                if (curr->mem_block == page_directory[page_directory_index].page_table[page_table_index].mem_block) {
+                    curr->size -= num_pages;
+                    break;
+                }
+                curr = curr->next;
+            }
+        }
+    }
+    // Free the pages
     for (int i = 0; i < num_pages; i++) {
         if (page_directory[page_directory_index].page_table[page_table_index].valid == 1) {
             page_directory[page_directory_index].page_table[page_table_index].valid = 0;
@@ -370,6 +407,7 @@ int t_free(unsigned int vp, size_t n){
             set_bit_at_index(physical_memory_bitmap, page_directory[page_directory_index].page_table[page_table_index].frame_number);
             page_directory[page_directory_index].page_table[page_table_index].frame_number = NULL;
             page_directory[page_directory_index].page_table[page_table_index].mem_block = NULL;
+            page_directory[page_directory_index].page_table[page_table_index].size = NULL;
             vp += PGSIZE;
             page_directory_index = (vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
             page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
@@ -377,7 +415,6 @@ int t_free(unsigned int vp, size_t n){
             return -1; // Return -1 if the page is not valid
         }
     }
-    mem_block--;
     return 0; // Return 0 if the pages are freed successfully
 }
 
@@ -385,10 +422,14 @@ int put_value(unsigned int vp, void *val, size_t n){ // does vp have to be page 
     //TODO: Finish
     unsigned int page_directory_index = (vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
     unsigned int page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
+    unsigned int page_offset = vp & ((1 << page_offset_bits) - 1);
     if (page_directory[page_directory_index].page_table[page_table_index].valid == 0) {
         return -1; // vp not mapped
     }
     int num_pages = n / PGSIZE + (n % PGSIZE != 0); // Calculate the number of pages (round up)
+    if (page_directory[page_directory_index].page_table[page_table_index].size < num_pages) {
+        return -1; // Return -1 if the size is greater than the allocated size
+    }
     if (page_directory[page_directory_index].page_table[page_table_index].present == 0) {
         page_fault_handler(vp, num_pages, 0);
     }
@@ -397,7 +438,7 @@ int put_value(unsigned int vp, void *val, size_t n){ // does vp have to be page 
         if (physical_address == NULL) {
             return -1; // vp not mapped
         }
-        memcpy(physical_memory + physical_address, val, n);
+        memcpy(physical_memory + physical_address+ page_offset, val, n);
         vp += PGSIZE;
     }
     return 0;
@@ -407,10 +448,14 @@ int get_value(unsigned int vp, void *dst, size_t n){
     //TODO: Finish
     unsigned int page_directory_index = (vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
     unsigned int page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
+    unsigned int page_offset = vp & ((1 << page_offset_bits) - 1);
     if (page_directory[page_directory_index].page_table[page_table_index].valid == 0) {
         return -1; // vp not mapped
     }
     int num_pages = n / PGSIZE + (n % PGSIZE != 0); // Calculate the number of pages (round up)
+    if (page_directory[page_directory_index].page_table[page_table_index].size < num_pages) {
+        return -1; // Return -1 if the size is greater than the allocated size
+    }
     if (page_directory[page_directory_index].page_table[page_table_index].present == 0) {
         page_fault_handler(vp, num_pages, 0);
     }
@@ -419,7 +464,7 @@ int get_value(unsigned int vp, void *dst, size_t n){
         if (physical_address == NULL) {
             return -1; // vp not mapped
         }
-        memcpy(dst, physical_memory + physical_address, n);
+        memcpy(dst, physical_memory + physical_address + page_offset, n);
         vp += PGSIZE;
     }
     return 0;
