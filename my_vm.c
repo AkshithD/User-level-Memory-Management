@@ -3,6 +3,9 @@
 //TODO: Define static variables and structs, include headers, etc.
 #include <stdio.h>
 #include <math.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
 
 #define PGSIZE 4096 //4KB
 int initialized = 0;
@@ -11,6 +14,7 @@ int page_table_bits;
 int page_directory_bits;
 void *physical_memory;
 char *physical_memory_bitmap;
+int num_frames = 4;
 int num_frames_free = 0;
 unsigned int mem_block = 0;
 typedef struct {
@@ -29,22 +33,22 @@ typedef struct {
 // Global Page Directory
 page_directory_entry *page_directory;
 
-typedef struct {
+typedef struct evicted_page{
     unsigned int vp;
     char *page_content;
     unsigned int mem_block;
     int size;
-    evicted_page *next;
+    struct evicted_page *next;
 } evicted_page;
 
 evicted_page *evicted_pages_head = NULL;
 evicted_page *evicted_pages_tail = NULL;
 
-typedef struct {
+typedef struct memory_frame{
     unsigned int vp;
     unsigned int mem_block;
     int size;
-    memory_frame *next;
+    struct memory_frame *next;
 } memory_frame;
 
 memory_frame *memory_frames_head = NULL;
@@ -56,14 +60,11 @@ static int allocate_frame(unsigned int page_directory_index, unsigned int page_t
 static int allocate_mem_block(unsigned int vp, int size, evicted_page *curr);
 static int evict_first_mem_block();
 static int page_fault_handler(unsigned int vp, int size, int malloc_flag);
-static unsigned int find_free_pages_in_virtual_memory(int num_pages);
-
-
+static int find_free_pages_in_virtual_memory(int num_pages, unsigned int *start_vp);
 
 void set_physical_mem(){
-    int num_frames = MEMSIZE / PGSIZE;
-    physical_memory = (void *)malloc(MEMSIZE);
-    memset(physical_memory, 0, MEMSIZE);
+    physical_memory = (void *)malloc(PGSIZE * num_frames);
+    memset(physical_memory, 0, PGSIZE * num_frames);
 
     // 1 bit per frame bitmap for physical memory
     physical_memory_bitmap = (char *)malloc(num_frames / 8);
@@ -76,30 +77,32 @@ void set_physical_mem(){
     
     // Calculate bits for page directory and page table
     int rest = 32 - page_offset_bits;
-    int bits_for_size_of_page_table = (int)log2(sizeof(page_table_entry));
-    page_table_bits = (rest + bits_for_size_of_page_table) / page_offset_bits;
-    page_directory_bits = rest - page_table_bits; 
+    page_table_bits = rest / 2;
+    page_directory_bits = rest - page_table_bits;
 
     // Calculate the number of entries in the page directory and page tables
     int num_page_directory_entries = 1 << page_directory_bits;
     int num_page_table_entries = 1 << page_table_bits;
-
     // Allocate memory for the page directory
     page_directory = (page_directory_entry *)malloc(num_page_directory_entries * sizeof(page_directory_entry));
-
+    if (page_directory == NULL) {
+        printf("Failed to allocate memory for page directory\n");
+        exit(1);
+    }
     // Allocate memory for each page table and initialize page table entries
     for (int i = 0; i < num_page_directory_entries; i++) {
         page_directory[i].page_table = (page_table_entry *)malloc(num_page_table_entries * sizeof(page_table_entry));
-
+        if (page_directory[i].page_table == NULL) {
+            printf("Failed to allocate memory for page table\n");
+            exit(1);
+        }
         // Initialize page table entries
         for (int j = 0; j < num_page_table_entries; j++) {
-            page_directory[i].page_table[j].frame_number = NULL; 
             page_directory[i].page_table[j].valid = 0;
             page_directory[i].page_table[j].present = 0;
-            page_directory[i].page_table[j].mem_block = NULL;
-            page_directory[i].page_table[j].size = NULL;
         }
     }
+    page_directory[0].page_table[0].valid = 1;
 }
 
 void * translate(unsigned int vp){
@@ -108,14 +111,14 @@ void * translate(unsigned int vp){
     unsigned int page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
     unsigned int page_offset = vp & ((1 << page_offset_bits) - 1);
 
-    //get frame numberhead
-    unsigned int frame_number = page_directory[page_directory_index].page_table[page_table_index].frame_number;
-    if (frame_number == NULL) {
+    if (page_directory[page_directory_index].page_table[page_table_index].valid == 0) {
         return NULL; // vp not mapped
     }
+    //get frame numberhead
+    unsigned int frame_number = page_directory[page_directory_index].page_table[page_table_index].frame_number;
     //get physical address
     unsigned int physical_address = (frame_number * PGSIZE) + page_offset;
-    return physical_address;
+    return &physical_memory + physical_address;
 }
 
 int allocate_mem_block(unsigned int vp, int size, evicted_page *curr){
@@ -129,13 +132,13 @@ int allocate_mem_block(unsigned int vp, int size, evicted_page *curr){
         vp += PGSIZE;
     }
     // copy the content of the evicted page to the physical memory
-    unsigned int physical_address = translate(vp);
+    void * physical_address = translate(vp);
     if (physical_address == NULL) {
         return -1; // vp not mapped
     }
     // set up new node
     memory_frame *new_curr = (memory_frame *)malloc(sizeof(memory_frame));
-    memcpy(physical_memory + physical_address, curr->page_content, size);
+    memcpy(physical_address, curr->page_content, curr->size);
     new_curr->vp = curr->vp;
     new_curr->mem_block = curr->mem_block;
     new_curr->size = curr->size;
@@ -163,14 +166,14 @@ int evict_first_mem_block(){
     unsigned int page_table_index = (evicting_node->vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
 
     // physical address of the replaced mem block
-    unsigned int physical_address = translate(evicting_node->vp);
+    void *physical_address = translate(evicting_node->vp);
     if (physical_address == NULL) {
         return -1; // vp not mapped
     }
     evicted_page *curr = (evicted_page *)malloc(sizeof(evicted_page)); // create a new evicted page and set its values
     curr->vp = evicting_node->vp;
     curr->page_content = malloc(evicting_node->size); // copy the content of the replaced mem block
-    memcpy(curr->page_content, physical_memory + physical_address, evicting_node->size);
+    memcpy(curr->page_content, physical_address, evicting_node->size);
     curr->mem_block = evicting_node->mem_block;
     curr->size = evicting_node->size;
     curr->next = NULL;
@@ -189,7 +192,6 @@ int evict_first_mem_block(){
     for (int i = 0; i < curr->size; i++) {
         page_directory[page_directory_index].page_table[page_table_index].present = 0;
         set_bit_at_index(physical_memory_bitmap, page_directory[page_directory_index].page_table[page_table_index].frame_number);
-        page_directory[page_directory_index].page_table[page_table_index].frame_number = NULL;
         clean_vp += PGSIZE;
         page_directory_index = (clean_vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
         page_table_index = (clean_vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
@@ -234,8 +236,7 @@ int page_fault_handler(unsigned int vp , int size, int malloc_flag){
 
 int allocate_frame(unsigned int page_directory_index, unsigned int page_table_index, int size){
     // Find a free frame
-    int num_frames = MEMSIZE / PGSIZE;
-    for (int i = 0; i < num_frames; i++) {
+    for (int i = 1; i < num_frames; i++) { //start from 1 physical address not first frame
         if (get_bit_at_index(physical_memory_bitmap, i) == 0){
             set_bit_at_index(physical_memory_bitmap, i);
             page_directory[page_directory_index].page_table[page_table_index].frame_number = i;
@@ -261,7 +262,7 @@ unsigned int page_map(unsigned int vp, int size){
     return 1;
 }
 
-unsigned int find_free_pages_in_virtual_memory(int num_pages) {
+int find_free_pages_in_virtual_memory(int num_pages, unsigned int *start_vp) {
     //find continuous free pages in virtual memory
     int pages_found = 0;
     unsigned int first_fit = 0;
@@ -273,14 +274,37 @@ unsigned int find_free_pages_in_virtual_memory(int num_pages) {
                 }
                 pages_found++;
                 if (pages_found == num_pages) {
-                    return first_fit;
+                    *start_vp = first_fit;
+                    return 1;
                 }
             } else {
                 pages_found = 0;
             }
         }
     }
-    return NULL;
+    return 0;
+}
+
+void print_memblock_list(){
+    memory_frame *curr = memory_frames_head;
+    if (curr == NULL) {
+        printf("No memory blocks allocated\n");
+    }
+    while (curr != NULL) {
+        printf("M: vp: %d, mem_block: %d, size: %d\n", curr->vp, curr->mem_block, curr->size);
+        curr = curr->next;
+    }
+}
+
+void print_evicted_pages(){
+    evicted_page *curr = evicted_pages_head;
+    if (curr == NULL) {
+        printf("No evicted pages\n");
+    }
+    while (curr != NULL) {
+        printf("E: vp: %d, mem_block: %d, size: %d\n", curr->vp, curr->mem_block, curr->size);
+        curr = curr->next;
+    }
 }
 
 void * t_malloc(size_t n) {
@@ -289,12 +313,14 @@ void * t_malloc(size_t n) {
         set_physical_mem();
         initialized = 1;
     }
+    
     int num_pages = n / PGSIZE + (n % PGSIZE != 0); 
-    unsigned int start_vp = find_free_pages_in_virtual_memory(num_pages);
-    unsigned int output_vp = start_vp;
-    if (start_vp == NULL) {
-        return NULL; // no free space in virtual memory
+    // make start_vp = first vp of the free pages in the if statement if its not null
+    unsigned int start_vp;
+    if (find_free_pages_in_virtual_memory(num_pages, &start_vp) == 0) {
+        return NULL; // Return NULL if there are not enough free pages
     }
+    unsigned int output_vp = start_vp;
     int ret;
     for (int i = 0; i < num_pages; i++) {
         ret = page_map(start_vp, num_pages);
@@ -303,7 +329,6 @@ void * t_malloc(size_t n) {
         }
         start_vp += PGSIZE;
     }
-
     // make new mem block and set it up
     memory_frame *new_curr = (memory_frame *)malloc(sizeof(memory_frame));
     new_curr->vp = output_vp;
@@ -319,8 +344,9 @@ void * t_malloc(size_t n) {
         memory_frames_tail->next = new_curr;
         memory_frames_tail = new_curr;
     }
-
-    return (void *)output_vp;
+    print_memblock_list();
+    print_evicted_pages();
+    return (void *)(uintptr_t)output_vp;
 }
 
 int free_mem_block(unsigned int vp){
@@ -363,13 +389,13 @@ int free_mem_block(unsigned int vp){
     }
 }
 
-int t_free(unsigned int vp, size_t n){
+int t_free(unsigned int vp, size_t n){ // What do we do if the give a vp in the middle and dont free till end? so theres a gap in the mem block
     //TODO: Finish
     unsigned int page_directory_index = (vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
     unsigned int page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
     unsigned int page_offset = vp & ((1 << page_offset_bits) - 1);
-    if (page_offset != 0) {
-        return -1; // Return -1 if the virtual address is not page-aligned
+    if (page_directory[page_directory_index].page_table[page_table_index].valid == 0) {
+        return -1; // Return -1 if the virtual address is not page-aligned or not mapped
     }
     int num_pages = n / PGSIZE + (n % PGSIZE != 0); // Calculate the number of pages to free (round up). gotta double check how to handle this
 
@@ -405,9 +431,6 @@ int t_free(unsigned int vp, size_t n){
             page_directory[page_directory_index].page_table[page_table_index].valid = 0;
             page_directory[page_directory_index].page_table[page_table_index].present = 0;
             set_bit_at_index(physical_memory_bitmap, page_directory[page_directory_index].page_table[page_table_index].frame_number);
-            page_directory[page_directory_index].page_table[page_table_index].frame_number = NULL;
-            page_directory[page_directory_index].page_table[page_table_index].mem_block = NULL;
-            page_directory[page_directory_index].page_table[page_table_index].size = NULL;
             vp += PGSIZE;
             page_directory_index = (vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
             page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
@@ -434,11 +457,11 @@ int put_value(unsigned int vp, void *val, size_t n){ // does vp have to be page 
         page_fault_handler(vp, num_pages, 0);
     }
     for (int i = 0; i < num_pages; i++) {
-        unsigned int physical_address = translate(vp);
+        void* physical_address = translate(vp);
         if (physical_address == NULL) {
             return -1; // vp not mapped
         }
-        memcpy(physical_memory + physical_address+ page_offset, val, n);
+        memcpy(physical_address, val, n);
         vp += PGSIZE;
     }
     return 0;
@@ -460,18 +483,55 @@ int get_value(unsigned int vp, void *dst, size_t n){
         page_fault_handler(vp, num_pages, 0);
     }
     for (int i = 0; i < num_pages; i++) {
-        unsigned int physical_address = translate(vp);
+        void* physical_address = translate(vp);
         if (physical_address == NULL) {
             return -1; // vp not mapped
         }
-        memcpy(dst, physical_memory + physical_address + page_offset, n);
+        memcpy(dst, physical_address, n);
         vp += PGSIZE;
     }
     return 0;
 }
 
 void mat_mult(unsigned int a, unsigned int b, unsigned int c, size_t l, size_t m, size_t n){
-    //TODO: Finish
+    //very basic implementation so far.
+    unsigned int page_directory_index_a = (a >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
+    unsigned int page_table_index_a = (a >> page_offset_bits) & ((1 << page_table_bits) - 1);
+    unsigned int page_offset_a = a & ((1 << page_offset_bits) - 1);
+    unsigned int page_directory_index_b = (b >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
+    unsigned int page_table_index_b = (b >> page_offset_bits) & ((1 << page_table_bits) - 1);
+    unsigned int page_offset_b = b & ((1 << page_offset_bits) - 1);
+    unsigned int page_directory_index_c = (c >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
+    unsigned int page_table_index_c = (c >> page_offset_bits) & ((1 << page_table_bits) - 1);
+    unsigned int page_offset_c = c & ((1 << page_offset_bits) - 1);
+    if (page_directory[page_directory_index_a].page_table[page_table_index_a].valid == 0 || page_directory[page_directory_index_b].page_table[page_table_index_b].valid == 0 || page_directory[page_directory_index_c].page_table[page_table_index_c].valid == 0) {
+        return; // vp not mapped
+    }
+    if (page_directory[page_directory_index_a].page_table[page_table_index_a].size < l * m || page_directory[page_directory_index_b].page_table[page_table_index_b].size < m * n || page_directory[page_directory_index_c].page_table[page_table_index_c].size < l * n) {
+        return; // Return -1 if the size is greater than the allocated size
+    }
+    if (page_directory[page_directory_index_a].page_table[page_table_index_a].present == 0) {
+        page_fault_handler(a, l * m, 0);
+    }
+    if (page_directory[page_directory_index_b].page_table[page_table_index_b].present == 0) {
+        page_fault_handler(b, m * n, 0);
+    }
+    if (page_directory[page_directory_index_c].page_table[page_table_index_c].present == 0) {
+        page_fault_handler(c, l * n, 0);
+    }
+    for (int i = 0; i < l; i++) {
+        for (int j = 0; j < n; j++) {
+            int sum = 0;
+            for (int k = 0; k < m; k++) {
+                int a_val;
+                get_value(a + (i * m + k) * sizeof(int), &a_val, sizeof(int));
+                int b_val;
+                get_value(b + (k * n + j) * sizeof(int), &b_val, sizeof(int));
+                sum += a_val * b_val;
+            }
+            put_value(c + (i * n + j) * sizeof(int), &sum, sizeof(int));
+        }
+    }
 }
 
 void add_TLB(unsigned int vpage, unsigned int ppage){
