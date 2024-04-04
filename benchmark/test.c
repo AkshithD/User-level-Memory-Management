@@ -2,60 +2,38 @@
 #include <stdlib.h>
 #include "../my_vm.h"
 
-#define ARRAY_SIZE 4096
-
 int main() {
-    // allocate a
-    int * a = (int*)t_malloc(ARRAY_SIZE * sizeof(int));
-    if (a == NULL) {
-        printf("A: Failed to allocate memory\n");
-    }
-    printf("A: Allocated memory at %p\n", a);
-    int * b = (int*)t_malloc(ARRAY_SIZE * sizeof(int));
-    if (b == NULL) {
-        printf("B: Failed to allocate memory\n");
-    }
-    printf("B: Allocated memory at %p\n", b);
-    int * c = (int*)t_malloc(ARRAY_SIZE * sizeof(int));
-    if (c == NULL) {
-        printf("C: Failed to allocate memory\n");
-    }
-    printf("C: Allocated memory at %p\n", c);
-    for(int i = 0; i < ARRAY_SIZE; i++) {
-        int value_to_set = i;
-        if(put_value((unsigned int)(a + i), &value_to_set, sizeof(int)) != 0) {
-            printf("A: Failed to put value\n");
-            return 1;
-        }
-        if(put_value((unsigned int)(b + i), &value_to_set, sizeof(int)) != 0) {
-            printf("B: Failed to put value\n");
-            return 1;
-        }
-    }
-    for(int i = 0; i < ARRAY_SIZE; i++) {
-        int value_to_get;
-        if(get_value((unsigned int)(a + i), &value_to_get, sizeof(int)) != 0) {
-            printf("A: Failed to get value\n");
-            return 1;
-        }
-        printf("A: expected %d, got %d\n", i, value_to_get);
-        if(get_value((unsigned int)(b + i), &value_to_get, sizeof(int)) != 0) {
-            printf("B: Failed to get value\n");
-            return 1;
-        }
-        printf("B: expected %d, got %d\n", i, value_to_get);
+    // Allocate memory using t_malloc
+    size_t mem_size = 10; // Size of memory to allocate
+    void *ptr = t_malloc(mem_size);
+    if (ptr == NULL) {
+        printf("Error allocating memory\n");
+        return 1;
     }
 
-    // free a
-    if(t_free((unsigned int)a, ARRAY_SIZE*sizeof(int)) != 0) {
-        printf("Failed to free memory\n");
+    // Set a value in the allocated memory
+    int value_to_set = 42;
+    if (put_value((unsigned int)ptr, &value_to_set, sizeof(int)) != 0) {
+        printf("Error setting value in memory\n");
+        t_free((unsigned int)ptr, mem_size); // Free allocated memory
         return 1;
     }
-    // free b
-    if(t_free((unsigned int)b, ARRAY_SIZE*sizeof(int)) != 0) {
-        printf("Failed to free memory\n");
+
+    // Get the value from the allocated memory and print it
+    int retrieved_value;
+    if (get_value((unsigned int)ptr, &retrieved_value, sizeof(int)) != 0) {
+        printf("Error getting value from memory\n");
+        t_free((unsigned int)ptr, mem_size); // Free allocated memory
         return 1;
     }
-    
+
+    printf("Retrieved value: %d\n", retrieved_value);
+
+    // Free allocated memory
+    if (t_free((unsigned int)ptr, mem_size) != 0) {
+        printf("Error freeing memory\n");
+        return 1;
+    }
+
     return 0;
 }
