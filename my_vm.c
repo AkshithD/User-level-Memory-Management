@@ -212,6 +212,7 @@ int t_free(unsigned int vp, size_t n){ // What do we do if the give a vp in the 
             return -1; // Return -1 if the page is not valid
         }
     }
+    printf("Freed %d pages starting from vp: %d\n", num_pages, vp);
     return 0; // Return 0 if the pages are freed successfully
 }
 
@@ -291,20 +292,24 @@ void mat_mult(unsigned int a, unsigned int b, unsigned int c, size_t l, size_t m
     if (get_bit_at_index(virtual_memory_bitmap, page_directory_index_a * (1 << page_table_bits) + page_table_index_a) == 0 || get_bit_at_index(virtual_memory_bitmap, page_directory_index_b * (1 << page_table_bits) + page_table_index_b) == 0 || get_bit_at_index(virtual_memory_bitmap, page_directory_index_c * (1 << page_table_bits) + page_table_index_c) == 0) {
         return; // vp not mapped
     }
-    if (page_directory[page_directory_index_a].page_table[page_table_index_a].size < l * m || page_directory[page_directory_index_b].page_table[page_table_index_b].size < m * n || page_directory[page_directory_index_c].page_table[page_table_index_c].size < l * n) {
-        return; // Return -1 if the size is greater than the allocated size
-    }
+
     for (int i = 0; i < l; i++) {
         for (int j = 0; j < n; j++) {
             int sum = 0;
             for (int k = 0; k < m; k++) {
                 int a_val;
-                get_value(a + (i * m + k) * sizeof(int), &a_val, sizeof(int));
+                if(get_value(a + (i * m + k) * sizeof(int), &a_val, sizeof(int)) == -1){
+                    return;
+                }
                 int b_val;
-                get_value(b + (k * n + j) * sizeof(int), &b_val, sizeof(int));
+                if(get_value(b + (k * n + j) * sizeof(int), &b_val, sizeof(int)) == -1){
+                    return;
+                }
                 sum += a_val * b_val;
             }
-            put_value(c + (i * n + j) * sizeof(int), &sum, sizeof(int));
+            if(put_value(c + (i * n + j) * sizeof(int), &sum, sizeof(int)) == -1){
+                return;
+            }
         }
     }
 }
