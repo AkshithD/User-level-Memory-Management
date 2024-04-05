@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -g -w -m32
+CFLAGS = -g -w -m32 -fsanitize=address,undefined
 LDFLAGS = -L.. -l:my_vm.o -lm
 
 all: clean test

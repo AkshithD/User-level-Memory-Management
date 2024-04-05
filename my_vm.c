@@ -29,10 +29,10 @@ typedef struct {
 // Global Page Directory
 page_directory_entry *page_directory;
 
-static void set_bit_at_index(char *bitmap, int index);
-static int get_bit_at_index(char *bitmap, int index);
-static int allocate_frame(unsigned int page_directory_index, unsigned int page_table_index, int size);
-static int find_free_pages_in_virtual_memory(int num_pages, unsigned int *start_vp);
+void set_bit_at_index(char *bitmap, int index);
+int get_bit_at_index(char *bitmap, int index);
+int allocate_frame(unsigned int page_directory_index, unsigned int page_table_index, int size);
+int find_free_pages_in_virtual_memory(int num_pages, unsigned int *start_vp);
 
 void set_physical_mem(){
     physical_memory = (void *)malloc(PGSIZE * num_frames);
@@ -95,7 +95,7 @@ void * translate(unsigned int vp){
     unsigned int frame_number = get_page_table(&page_directory[page_directory_index])[page_table_index].frame_number;
     //get physical address
     unsigned int physical_address = (frame_number * PGSIZE) + page_offset;
-    return &physical_memory + physical_address;
+    return (physical_memory + physical_address);
 }
 
 int allocate_frame(unsigned int page_directory_index, unsigned int page_table_index, int size){
@@ -237,14 +237,11 @@ int put_value(unsigned int vp, void *val, size_t n){ // does vp have to be page 
             return -1; // vp not mapped
         }
         size_t bytes_to_copy = bytes_left < PGSIZE ? bytes_left : PGSIZE;
-        printf("Before memcpy, val: %p, physical_address: %p, bytes_to_copy: %zu, vp: %u\n", val, physical_address, bytes_to_copy, vp);
-        memcpy(physical_address, val, bytes_to_copy);
-        printf("Copied %zu bytes to vp: %u\n", bytes_to_copy, vp);
+        memcpy(physical_address, (void *) val, bytes_to_copy);
         bytes_left -= bytes_to_copy;
         vp += bytes_to_copy;
         val = (void*)((char*)val + bytes_to_copy);
     }
-    
     return 0;
 }
 
@@ -271,7 +268,6 @@ int get_value(unsigned int vp, void *dst, size_t n){
             return -1; // vp not mapped
         }
         size_t bytes_to_copy = bytes_left < PGSIZE ? bytes_left : PGSIZE;
-        printf("Before memcpy, dst: %p, physical_address: %p, bytes_to_copy: %zu, vp: %u\n", dst, physical_address, bytes_to_copy, vp);
         memcpy(dst, *(&physical_address), bytes_to_copy);
         bytes_left -= bytes_to_copy;
         vp += bytes_to_copy;
@@ -283,34 +279,34 @@ int get_value(unsigned int vp, void *dst, size_t n){
 
 void mat_mult(unsigned int a, unsigned int b, unsigned int c, size_t l, size_t m, size_t n){
     //very basic implementation so far.
-    // unsigned int page_directory_index_a = (a >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
-    // unsigned int page_table_index_a = (a >> page_offset_bits) & ((1 << page_table_bits) - 1);
-    // unsigned int page_offset_a = a & ((1 << page_offset_bits) - 1);
-    // unsigned int page_directory_index_b = (b >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
-    // unsigned int page_table_index_b = (b >> page_offset_bits) & ((1 << page_table_bits) - 1);
-    // unsigned int page_offset_b = b & ((1 << page_offset_bits) - 1);
-    // unsigned int page_directory_index_c = (c >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
-    // unsigned int page_table_index_c = (c >> page_offset_bits) & ((1 << page_table_bits) - 1);
-    // unsigned int page_offset_c = c & ((1 << page_offset_bits) - 1);
-    // if (get_bit_at_index(virtual_memory_bitmap, page_directory_index_a * (1 << page_table_bits) + page_table_index_a) == 0 || get_bit_at_index(virtual_memory_bitmap, page_directory_index_b * (1 << page_table_bits) + page_table_index_b) == 0 || get_bit_at_index(virtual_memory_bitmap, page_directory_index_c * (1 << page_table_bits) + page_table_index_c) == 0) {
-    //     return; // vp not mapped
-    // }
-    // if (page_directory[page_directory_index_a].page_table[page_table_index_a].size < l * m || page_directory[page_directory_index_b].page_table[page_table_index_b].size < m * n || page_directory[page_directory_index_c].page_table[page_table_index_c].size < l * n) {
-    //     return; // Return -1 if the size is greater than the allocated size
-    // }
-    // for (int i = 0; i < l; i++) {
-    //     for (int j = 0; j < n; j++) {
-    //         int sum = 0;
-    //         for (int k = 0; k < m; k++) {
-    //             int a_val;
-    //             get_value(a + (i * m + k) * sizeof(int), &a_val, sizeof(int));
-    //             int b_val;
-    //             get_value(b + (k * n + j) * sizeof(int), &b_val, sizeof(int));
-    //             sum += a_val * b_val;
-    //         }
-    //         put_value(c + (i * n + j) * sizeof(int), &sum, sizeof(int));
-    //     }
-    // }
+    unsigned int page_directory_index_a = (a >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
+    unsigned int page_table_index_a = (a >> page_offset_bits) & ((1 << page_table_bits) - 1);
+    unsigned int page_offset_a = a & ((1 << page_offset_bits) - 1);
+    unsigned int page_directory_index_b = (b >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
+    unsigned int page_table_index_b = (b >> page_offset_bits) & ((1 << page_table_bits) - 1);
+    unsigned int page_offset_b = b & ((1 << page_offset_bits) - 1);
+    unsigned int page_directory_index_c = (c >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
+    unsigned int page_table_index_c = (c >> page_offset_bits) & ((1 << page_table_bits) - 1);
+    unsigned int page_offset_c = c & ((1 << page_offset_bits) - 1);
+    if (get_bit_at_index(virtual_memory_bitmap, page_directory_index_a * (1 << page_table_bits) + page_table_index_a) == 0 || get_bit_at_index(virtual_memory_bitmap, page_directory_index_b * (1 << page_table_bits) + page_table_index_b) == 0 || get_bit_at_index(virtual_memory_bitmap, page_directory_index_c * (1 << page_table_bits) + page_table_index_c) == 0) {
+        return; // vp not mapped
+    }
+    if (page_directory[page_directory_index_a].page_table[page_table_index_a].size < l * m || page_directory[page_directory_index_b].page_table[page_table_index_b].size < m * n || page_directory[page_directory_index_c].page_table[page_table_index_c].size < l * n) {
+        return; // Return -1 if the size is greater than the allocated size
+    }
+    for (int i = 0; i < l; i++) {
+        for (int j = 0; j < n; j++) {
+            int sum = 0;
+            for (int k = 0; k < m; k++) {
+                int a_val;
+                get_value(a + (i * m + k) * sizeof(int), &a_val, sizeof(int));
+                int b_val;
+                get_value(b + (k * n + j) * sizeof(int), &b_val, sizeof(int));
+                sum += a_val * b_val;
+            }
+            put_value(c + (i * n + j) * sizeof(int), &sum, sizeof(int));
+        }
+    }
 }
 
 void add_TLB(unsigned int vpage, unsigned int ppage){
@@ -329,7 +325,7 @@ void print_TLB_missrate(){
  * SETTING A BIT AT AN INDEX
  * Function to set a bit at "index" bitmap
  */
-static void set_bit_at_index(char *bitmap, int index)
+void set_bit_at_index(char *bitmap, int index)
 {
     int byteIndex = index / 8;
     int bitIndex = index % 8;
@@ -340,7 +336,7 @@ static void set_bit_at_index(char *bitmap, int index)
  * GETTING A BIT AT AN INDEX
  * Function to get a bit at "index"
  */
-static int get_bit_at_index(char *bitmap, int index)
+int get_bit_at_index(char *bitmap, int index)
 {
     //Get to the location in the character bitmap array
     //Implement your code here
