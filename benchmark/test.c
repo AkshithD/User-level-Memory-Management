@@ -34,6 +34,6 @@ int main() {
         printf("Error freeing memory\n");
         return 1;
     }
-
+    print_TLB_missrate();
     return 0;
 }
