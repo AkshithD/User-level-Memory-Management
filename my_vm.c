@@ -7,7 +7,6 @@
 #include <string.h>
 #include <stdint.h>
 
-#define PGSIZE 4096 //4KB
 int initialized = 0;
 int page_offset_bits;
 int page_table_bits;
@@ -175,6 +174,7 @@ void * t_malloc(size_t n) {
     int ret;
     for (int i = 0; i < num_pages; i++) {
         ret = page_map(start_vp, num_pages);
+        num_pages--;
         if (ret == 1) {
             return NULL; // Return NULL if the page is already mapped
         }
@@ -188,8 +188,6 @@ void * t_malloc(size_t n) {
             printf("Physical memory bitmap at index %d: %d at %p\n", i, get_bit_at_index(physical_memory_bitmap, i), &physical_memory + i * PGSIZE);
         }
     }
-    
-    printf("Allocated %d pages starting from vp: %d\n", num_pages, output_vp);
     return (void *)output_vp;
 }
 
@@ -202,14 +200,6 @@ int t_free(unsigned int vp, size_t n){ // What do we do if the give a vp in the 
         return -1; // Return -1 if the virtual address is not mapped
     }
     int num_pages = n / PGSIZE + (n % PGSIZE != 0); // Calculate the number of pages to free (round up). gotta double check how to handle this
-
-    if (get_page_table(&page_directory[page_directory_index])[page_table_index].size < num_pages) {
-        return -1; // Return -1 if the size is greater than the allocated size
-    }else if (get_page_table(&page_directory[page_directory_index])[page_table_index].size == num_pages) { // if equal then free the whole mem block
-        get_page_table(&page_directory[page_directory_index])[page_table_index].size = 0;
-    }else{ // if less than, adjust the size
-        get_page_table(&page_directory[page_directory_index])[page_table_index].size -= num_pages;
-    }
 
     // Free the pages
     for (int i = 0; i < num_pages; i++) {

@@ -3,6 +3,7 @@
 #define MAX_MEMSIZE (1UL<<32)
 #define MEMSIZE (1UL<<30)
 #define TLB_ENTRIES 256
+#define PGSIZE 8192
 
 
 void set_physical_mem();
