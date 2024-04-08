@@ -1,54 +1,67 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "../my_vm.h"
-#define L 10 // Number of rows in matrix a and c
-#define M 2 // Number of columns in matrix a and rows in matrix b
-#define N 4 // Number of columns in matrix b and c
-
-
 
 int main() {
-    unsigned int a = (unsigned int)t_malloc(L * M * sizeof(int));
-    unsigned int b = (unsigned int)t_malloc(M * N * sizeof(int));
-    unsigned int c = (unsigned int)t_malloc(L * N * sizeof(int));
-
-    if (a == 0 || b == 0 || c == 0) {
-        printf("Memory allocation failed\n");
-        return -1;
+    // Allocate memory using t_malloc
+    size_t mem_size = 10; // Size of memory to allocate
+    void *ptr = t_malloc(mem_size);
+    if (ptr == NULL) {
+        printf("Error allocating memory\n");
+        return 1;
     }
 
-    // Initialize matrix a with values
-    for (int i = 0; i < L; i++) {
-        for (int j = 0; j < M; j++) {
-            int value = i * M + j; // Example value for matrix a
-            put_value(a + (i * M + j) * sizeof(int), &value, sizeof(int)); 
-        }
+    // Set a value in the allocated memory
+    int value_to_set = 42;
+    if (put_value((unsigned int)ptr, &value_to_set, sizeof(int)) != 0) {
+        printf("Error setting value in memory\n");
+        t_free((unsigned int)ptr, mem_size); // Free allocated memory
+        return 1;
     }
 
-    // Initialize matrix b with values
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            int value = i * N + j; // Example value for matrix b
-            put_value(b + (i * N + j) * sizeof(int), &value, sizeof(int));
-        }
+    // Get the value from the allocated memory and print it
+    int retrieved_value;
+    if (get_value((unsigned int)ptr, &retrieved_value, sizeof(int)) != 0) {
+        printf("Error getting value from memory\n");
+        t_free((unsigned int)ptr, mem_size); // Free allocated memory
+        return 1;
     }
 
-    // Perform matrix multiplication
-    mat_mult(a, b, c, L, M, N);
+    printf("Retrieved value: %d\n", retrieved_value);
 
-    // Display the contents of matrix c to verify the results
-    for (int i = 0; i < L; i++) {
-        for (int j = 0; j < N; j++) {
-            int value;
-            get_value(c + (i * N + j) * sizeof(int), &value, sizeof(int));
-            printf("%d ", value);
-        }
-        printf("\n");
+    // Free allocated memory
+    if (t_free((unsigned int)ptr, mem_size) != 0) {
+        printf("Error freeing memory\n");
+        return 1;
     }
 
-    t_free(a, L * M * sizeof(int));
-    t_free(b, M * N * sizeof(int));
-    t_free(c, L * N * sizeof(int));
+    ptr = t_malloc(mem_size);
+    if (ptr == NULL) {
+        printf("Error allocating memory\n");
+        return 1;
+    }
+
+    // Set a value in the allocated memory
+    if (put_value((unsigned int)ptr, &value_to_set, sizeof(int)) != 0) {
+        printf("Error setting value in memory\n");
+        t_free((unsigned int)ptr, mem_size); // Free allocated memory
+        return 1;
+    }
+
+    // Get the value from the allocated memory and print it
+    if (get_value((unsigned int)ptr, &retrieved_value, sizeof(int)) != 0) {
+        printf("Error getting value from memory\n");
+        t_free((unsigned int)ptr, mem_size); // Free allocated memory
+        return 1;
+    }
+
+    printf("Retrieved value: %d\n", retrieved_value);
+
+    // Free allocated memory
+    if (t_free((unsigned int)ptr, mem_size) != 0) {
+        printf("Error freeing memory\n");
+        return 1;
+    }
 
     return 0;
 }

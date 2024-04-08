@@ -39,6 +39,7 @@ page_directory_entry *page_directory;
 
 void set_bit_at_index(char *bitmap, int index);
 int get_bit_at_index(char *bitmap, int index);
+void clear_bit_at_index(char *bitmap, int index);
 int find_free_pages_in_virtual_memory(int num_pages, unsigned int *start_vp);
 
 void set_physical_mem(){
@@ -124,7 +125,6 @@ unsigned int page_map(unsigned int vp, int size){
             set_bit_at_index(physical_memory_bitmap, i);
             page_table_entry *page_table = get_page_table(&page_directory[page_directory_index]);
             page_table[page_table_index].frame_number = i;
-            printf("physical frame address: %p at frame: %d\n", &physical_memory +page_table[page_table_index].frame_number * PGSIZE, page_table[page_table_index].frame_number);
             page_table[page_table_index].size = size;
             set_bit_at_index(virtual_memory_bitmap, page_directory_index * (1 << page_table_bits) + page_table_index);
             return 0;
@@ -182,12 +182,6 @@ void * t_malloc(size_t n) {
     }
     unsigned int temp_vp = output_vp;
     add_TLB(output_vp, page_directory[temp_vp >> (page_offset_bits + page_table_bits)].page_table[temp_vp >> page_offset_bits].frame_number * PGSIZE);
-
-    for (int i = 0; i < num_frames; i++) {
-        if (get_bit_at_index(physical_memory_bitmap, i) == 1) {
-            printf("Physical memory bitmap at index %d: %d at %p\n", i, get_bit_at_index(physical_memory_bitmap, i), &physical_memory + i * PGSIZE);
-        }
-    }
     return (void *)output_vp;
 }
 
@@ -204,8 +198,8 @@ int t_free(unsigned int vp, size_t n){ // What do we do if the give a vp in the 
     // Free the pages
     for (int i = 0; i < num_pages; i++) {
         if (get_bit_at_index(virtual_memory_bitmap, page_directory_index * (1 << page_table_bits) + page_table_index) == 1) {
-            set_bit_at_index(virtual_memory_bitmap, page_directory_index * (1 << page_table_bits) + page_table_index);
-            set_bit_at_index(physical_memory_bitmap, get_page_table(&page_directory[page_directory_index])[page_table_index].frame_number);
+            clear_bit_at_index(virtual_memory_bitmap, page_directory_index * (1 << page_table_bits) + page_table_index);
+            clear_bit_at_index(physical_memory_bitmap, get_page_table(&page_directory[page_directory_index])[page_table_index].frame_number);
             vp += PGSIZE;
             page_directory_index = (vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
             page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
@@ -213,6 +207,22 @@ int t_free(unsigned int vp, size_t n){ // What do we do if the give a vp in the 
             return -1; // Return -1 if the page is not valid
         }
     }
+    //check if vm is empty
+    clear_bit_at_index(virtual_memory_bitmap, 0);
+    for (int i = 0; i < (1 << page_directory_bits); i++) {
+        for (int j = 0; j < (1 << page_table_bits); j++) {
+            if (get_bit_at_index(virtual_memory_bitmap, i * (1 << page_table_bits) + j) == 1) {
+                set_bit_at_index(virtual_memory_bitmap, 0);
+                return 0; // Return 0 if the pages are freed successfully
+            }
+        }
+    }
+    //free everything
+    free(physical_memory);
+    free(physical_memory_bitmap);
+    free(virtual_memory_bitmap);
+    free(TLB);
+    initialized = 0;
     return 0; // Return 0 if the pages are freed successfully
 }
 
@@ -361,4 +371,11 @@ int get_bit_at_index(char *bitmap, int index)
     int byteIndex = index / 8;
     int bitIndex = index % 8;
     return (bitmap[byteIndex] & (1 << bitIndex)) != 0; 
+}
+
+void clear_bit_at_index(char *bitmap, int index)
+{
+    int byteIndex = index / 8;
+    int bitIndex = index % 8;
+    bitmap[byteIndex] &= ~(1 << bitIndex);
 }
