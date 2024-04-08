@@ -158,10 +158,6 @@ int find_free_pages_in_virtual_memory(int num_pages, unsigned int *start_vp) {
 
 void * t_malloc(size_t n) {
     //TODO: Finish
-    if (initialized == 0) {
-        set_physical_mem();
-        initialized = 1;
-    }
     
     int num_pages = n / PGSIZE + (n % PGSIZE != 0); 
     // make start_vp = first vp of the free pages in the if statement if its not null
@@ -207,22 +203,6 @@ int t_free(unsigned int vp, size_t n){ // What do we do if the give a vp in the 
             return -1; // Return -1 if the page is not valid
         }
     }
-    //check if vm is empty
-    clear_bit_at_index(virtual_memory_bitmap, 0);
-    for (int i = 0; i < (1 << page_directory_bits); i++) {
-        for (int j = 0; j < (1 << page_table_bits); j++) {
-            if (get_bit_at_index(virtual_memory_bitmap, i * (1 << page_table_bits) + j) == 1) {
-                set_bit_at_index(virtual_memory_bitmap, 0);
-                return 0; // Return 0 if the pages are freed successfully
-            }
-        }
-    }
-    //free everything
-    free(physical_memory);
-    free(physical_memory_bitmap);
-    free(virtual_memory_bitmap);
-    free(TLB);
-    initialized = 0;
     return 0; // Return 0 if the pages are freed successfully
 }
 

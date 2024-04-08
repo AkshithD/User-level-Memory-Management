@@ -5,6 +5,7 @@
 int main() {
     // Allocate memory using t_malloc
     size_t mem_size = 10; // Size of memory to allocate
+    set_physical_mem();
     void *ptr = t_malloc(mem_size);
     if (ptr == NULL) {
         printf("Error allocating memory\n");
@@ -34,7 +35,7 @@ int main() {
         printf("Error freeing memory\n");
         return 1;
     }
-
+    
     ptr = t_malloc(mem_size);
     if (ptr == NULL) {
         printf("Error allocating memory\n");
