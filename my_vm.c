@@ -111,7 +111,7 @@ void * translate(unsigned int vp){
     return (physical_memory + physical_address);
 }
 
-unsigned int page_map(unsigned int vp, int size){
+unsigned int page_map(unsigned int vp){
     //TODO: Finish
     unsigned int page_directory_index = (vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
     unsigned int page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
@@ -168,7 +168,7 @@ void * t_malloc(size_t n) {
     unsigned int output_vp = start_vp;
     int ret;
     for (int i = 0; i < num_pages; i++) {
-        ret = page_map(start_vp, num_pages);
+        ret = page_map(start_vp);
         num_pages--;
         if (ret == 1) {
             return NULL; // Return NULL if the page is already mapped
