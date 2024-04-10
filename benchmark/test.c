@@ -27,12 +27,34 @@ int main() {
         }
     }
 
+    //printf("Matrix a:\n");
+    // Display the contents of matrix a to verify the initialization
+    for (int i = 0; i < L; i++) {
+        for (int j = 0; j < M; j++) {
+            int value;
+            get_value(a + (i * M + j) * sizeof(int), &value, sizeof(int));
+            printf("%d ", value);
+        }
+        printf("\n");
+    }
+
     // Initialize matrix b with values
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < N; j++) {
             int value = i * N + j; // Example value for matrix b
             put_value(b + (i * N + j) * sizeof(int), &value, sizeof(int));
         }
+    }
+
+    //printf("Matrix b:\n");
+    // Display the contents of matrix b to verify the initialization
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            int value;
+            get_value(b + (i * N + j) * sizeof(int), &value, sizeof(int));
+            printf("%d ", value);
+        }
+        printf("\n");
     }
 
     // Perform matrix multiplication
@@ -51,6 +73,8 @@ int main() {
     t_free(a, L * M * sizeof(int));
     t_free(b, M * N * sizeof(int));
     t_free(c, L * N * sizeof(int));
+
+    print_TLB_missrate();
 
     return 0;
 }
