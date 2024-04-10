@@ -1,6 +1,4 @@
 #include "my_vm.h"
-
-//TODO: Define static variables and structs, include headers, etc.
 #include <stdio.h>
 #include <math.h>
 #include <stdlib.h>
