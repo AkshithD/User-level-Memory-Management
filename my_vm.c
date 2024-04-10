@@ -19,7 +19,6 @@ int tlb_hits = 0;
 int tlb_misses = 0;
 typedef struct {
     unsigned int frame_number; // Physical frame numbers
-    unsigned int size; // size of the memory block
 } page_table_entry;
 
 // Page Directory Entry Structure
@@ -59,8 +58,7 @@ void set_physical_mem(){
     int page_entries_in_page = PGSIZE / sizeof(page_table_entry);
     page_table_bits = (int)log2(page_entries_in_page);
     page_directory_bits = rest - page_table_bits;
-    int frames_needed_for_page_table = 1 << page_directory_bits;
-
+    
     // Allocate memory for the page directory from my physical memory
     page_directory = (page_directory_entry *)physical_memory;
     memset(page_directory, 0, PGSIZE);
@@ -120,12 +118,15 @@ unsigned int page_map(unsigned int vp, int size){
     unsigned int page_directory_index = (vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
     unsigned int page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
 
+    if (get_bit_at_index(virtual_memory_bitmap, page_directory_index * (1 << page_table_bits) + page_table_index) == 1) {
+        return 1; // Return 1 if the page is already mapped
+    }
+
     for (int i = 1; i < num_frames; i++) { //start from 1 physical address not first frame
         if (get_bit_at_index(physical_memory_bitmap, i) == 0){
             set_bit_at_index(physical_memory_bitmap, i);
             page_table_entry *page_table = get_page_table(&page_directory[page_directory_index]);
             page_table[page_table_index].frame_number = i;
-            page_table[page_table_index].size = size;
             set_bit_at_index(virtual_memory_bitmap, page_directory_index * (1 << page_table_bits) + page_table_index);
             return 0;
         }
@@ -206,23 +207,18 @@ int t_free(unsigned int vp, size_t n){ // What do we do if the give a vp in the 
     return 0; // Return 0 if the pages are freed successfully
 }
 
-int put_value(unsigned int vp, void *val, size_t n){ // does vp have to be page alligned
-    //TODO: Finish
-    unsigned int page_directory_index = (vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
-    unsigned int page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
-    unsigned int page_offset = vp & ((1 << page_offset_bits) - 1);
-    if (get_bit_at_index(virtual_memory_bitmap, page_directory_index * (1 << page_table_bits) + page_table_index) == 0) {
-        return -1; // vp not mapped
-    }
-    int num_pages = n / PGSIZE + (n % PGSIZE != 0); // Calculate the number of pages (round up)
+int put_value(unsigned int vp, void *val, size_t n){
+    int num_pages = n / PGSIZE + (n % PGSIZE != 0);
     if (val == NULL) {
         return -1; // Return -1 if the value is NULL
     }
-    if (get_page_table(&page_directory[page_directory_index])[page_table_index].size < num_pages) {
-        return -1; // Return -1 if the size is greater than the allocated size
-    }
     size_t bytes_left = n;
     for (int i = 0; i < num_pages; i++) {
+        unsigned int page_directory_index = (vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
+        unsigned int page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
+        if (get_bit_at_index(virtual_memory_bitmap, page_directory_index * (1 << page_table_bits) + page_table_index) == 0) {
+            return -1; // vp not mapped
+        }
         void* physical_address = translate(vp);
         if (physical_address == NULL) {
             return -1; // vp not mapped
@@ -237,23 +233,18 @@ int put_value(unsigned int vp, void *val, size_t n){ // does vp have to be page 
 }
 
 int get_value(unsigned int vp, void *dst, size_t n){
-    //TODO: Finish
-    unsigned int page_directory_index = (vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
-    unsigned int page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
-    unsigned int page_offset = vp & ((1 << page_offset_bits) - 1);
-    if (get_bit_at_index(virtual_memory_bitmap, page_directory_index * (1 << page_table_bits) + page_table_index) == 0) {
-        return -1; // vp not mapped
-    }
-    int num_pages = n / PGSIZE + (n % PGSIZE != 0); // Calculate the number of pages (round up)
+    int num_pages = n / PGSIZE + (n % PGSIZE != 0);
     if (dst == NULL) {
         return -1; // Return -1 if the value is NULL
     }
-    if (get_page_table(&page_directory[page_directory_index])[page_table_index].size < num_pages) {
-        return -1; // Return -1 if the size is greater than the allocated size
-    }
     size_t bytes_left = n;
     void *dst_start = &dst;
-    for (int i = 0; i < num_pages; i++) {
+    for (int i = 0; i < num_pages; i++) { 
+        unsigned int page_directory_index = (vp >> (page_offset_bits + page_table_bits)) & ((1 << page_directory_bits) - 1);
+        unsigned int page_table_index = (vp >> page_offset_bits) & ((1 << page_table_bits) - 1);
+        if (get_bit_at_index(virtual_memory_bitmap, page_directory_index * (1 << page_table_bits) + page_table_index) == 0) {
+            return -1; // vp not mapped
+        }
         void* physical_address = translate(vp);
         if (physical_address == NULL) {
             return -1; // vp not mapped
